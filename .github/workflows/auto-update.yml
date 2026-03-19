@@ -8,7 +8,7 @@ on:
         type: string
     secrets:
       PERSONAL_TOKEN:
-        required: true
+        required: false
 
 concurrency:
   group: auto-update
