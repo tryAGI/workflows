@@ -6,9 +6,6 @@ on:
         description: 'Path to the SDK library directory (e.g., src/libs/Anthropic)'
         required: true
         type: string
-    secrets:
-      PERSONAL_TOKEN:
-        required: false
 
 concurrency:
   group: auto-update
