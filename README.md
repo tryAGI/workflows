@@ -45,9 +45,9 @@ Checks for OpenAPI spec updates, regenerates SDK code, and opens a PR if changes
 
 **Secrets:**
 
-| Secret | Required | Description |
-|--------|----------|-------------|
-| `PERSONAL_TOKEN` | Yes | GitHub token with repo permissions for creating PRs |
+| Secret | Source | Description |
+|--------|--------|-------------|
+| `PERSONAL_TOKEN` | Org secret via `secrets: inherit` | GitHub token with repo permissions for creating PRs |
 
 **Usage:**
 ```yaml
@@ -57,6 +57,11 @@ on:
     - cron: '0 */3 * * *'
   workflow_dispatch:
 
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
 jobs:
   auto-update:
     uses: tryAGI/workflows/.github/workflows/auto-update.yml@main
@@ -64,6 +69,8 @@ jobs:
       library-path: src/libs/MySDK
     secrets: inherit
 ```
+
+> **Important:** The caller MUST declare `permissions` at the workflow level. Reusable workflows cannot escalate permissions beyond what the caller grants.
 
 **Behavior:**
 - Checks out the repo and creates a timestamped branch
