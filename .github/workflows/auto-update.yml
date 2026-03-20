@@ -29,7 +29,8 @@ jobs:
 
       - name: Generate branch name
         id: branch
-        run: echo "branch_name=bot/update-openapi_$(date +'%Y%m%d%H%M')" >> $GITHUB_OUTPUT
+        run: |
+          echo "branch_name=bot/update-openapi_$(date +'%Y%m%d%H%M')" >> $GITHUB_OUTPUT
 
       - name: Create branch
         run: |
