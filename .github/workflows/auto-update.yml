@@ -27,15 +27,24 @@ jobs:
           git config --local user.email "dependabot@bot.com"
           git config --local user.name "github-actions[bot]"
 
-      - name: Generate branch name
-        id: branch
+      - name: Check for existing open PR
+        id: existing_pr
         run: |
-          echo "branch_name=bot/update-openapi_$(date +'%Y%m%d%H%M')" >> "$GITHUB_OUTPUT"
+          EXISTING_PR=$(gh pr list --head "bot/update-openapi" --state open --json number,url --jq '.[0]')
+          if [ -n "$EXISTING_PR" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "url=$(echo "$EXISTING_PR" | jq -r '.url')" >> "$GITHUB_OUTPUT"
+            echo "Found existing open PR: $(echo "$EXISTING_PR" | jq -r '.url')"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "No existing open PR found"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
 
-      - name: Create branch
+      - name: Create branch from main
         run: |
-          git checkout -b ${{ steps.branch.outputs.branch_name }} origin/main
-          git rebase main
+          git checkout -b "bot/update-openapi" origin/main
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
@@ -63,16 +72,16 @@ jobs:
         run: |
           git add .
           git commit -m "feat: Updated OpenAPI spec"
-          git push --force-with-lease -u origin ${{ steps.branch.outputs.branch_name }}
+          git push --force-with-lease -u origin bot/update-openapi
 
       - name: Wait for 15 seconds
-        if: steps.changes.outputs.has_changes == 'true'
+        if: steps.changes.outputs.has_changes == 'true' && steps.existing_pr.outputs.exists == 'false'
         run: |
           sleep 15
 
       - name: Create pull request
-        if: steps.changes.outputs.has_changes == 'true'
+        if: steps.changes.outputs.has_changes == 'true' && steps.existing_pr.outputs.exists == 'false'
         run: |
-          gh pr create -B main -H ${{ steps.branch.outputs.branch_name }} --title 'feat: Updated OpenAPI spec' --body 'Automated OpenAPI spec update'
+          gh pr create -B main -H bot/update-openapi --title 'feat: Updated OpenAPI spec' --body 'Automated OpenAPI spec update'
         env:
           GITHUB_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
