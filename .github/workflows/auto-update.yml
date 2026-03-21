@@ -33,6 +33,8 @@ jobs:
           EXISTING_PR=$(gh pr list --head "bot/update-openapi" --state open --json number,url --jq '.[0]')
           if [ -n "$EXISTING_PR" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
+            PR_NUMBER=$(echo "$EXISTING_PR" | jq -r '.number')
+            echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
             echo "url=$(echo "$EXISTING_PR" | jq -r '.url')" >> "$GITHUB_OUTPUT"
             echo "Found existing open PR: $(echo "$EXISTING_PR" | jq -r '.url')"
           else
@@ -44,6 +46,7 @@ jobs:
 
       - name: Create branch from main
         run: |
+          git fetch origin bot/update-openapi || true
           git checkout -b "bot/update-openapi" origin/main
 
       - name: Setup .NET
@@ -67,6 +70,30 @@ jobs:
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Close stale PR and clean up branch (no changes)
+        if: steps.changes.outputs.has_changes == 'false' && steps.existing_pr.outputs.exists == 'true'
+        run: |
+          echo "No changes detected but open PR #${{ steps.existing_pr.outputs.number }} exists — closing as stale"
+          gh pr close "${{ steps.existing_pr.outputs.number }}" --comment "Closing: spec regeneration now matches main, no changes needed."
+          git push origin --delete bot/update-openapi || true
+          echo "### No Changes Detected" >> "$GITHUB_STEP_SUMMARY"
+          echo "Closed stale PR #${{ steps.existing_pr.outputs.number }} and deleted branch \`bot/update-openapi\`." >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+
+      - name: Clean up orphaned branch (no changes, no PR)
+        if: steps.changes.outputs.has_changes == 'false' && steps.existing_pr.outputs.exists == 'false'
+        run: |
+          if git ls-remote --exit-code --heads origin bot/update-openapi > /dev/null 2>&1; then
+            echo "No changes and no open PR — deleting orphaned branch"
+            git push origin --delete bot/update-openapi || true
+            echo "### No Changes Detected" >> "$GITHUB_STEP_SUMMARY"
+            echo "Deleted orphaned branch \`bot/update-openapi\` (no associated PR)." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### No Changes Detected" >> "$GITHUB_STEP_SUMMARY"
+            echo "OpenAPI spec is up to date. Nothing to do." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Push changes
         if: steps.changes.outputs.has_changes == 'true'
         run: |
@@ -82,6 +109,15 @@ jobs:
       - name: Create pull request
         if: steps.changes.outputs.has_changes == 'true' && steps.existing_pr.outputs.exists == 'false'
         run: |
-          gh pr create -B main -H bot/update-openapi --title 'feat: Updated OpenAPI spec' --body 'Automated OpenAPI spec update'
+          PR_URL=$(gh pr create -B main -H bot/update-openapi --title 'feat: Updated OpenAPI spec' --body 'Automated OpenAPI spec update')
+          echo "### PR Created" >> "$GITHUB_STEP_SUMMARY"
+          echo "Created new PR: $PR_URL" >> "$GITHUB_STEP_SUMMARY"
         env:
           GITHUB_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+
+      - name: Summary for updated PR
+        if: steps.changes.outputs.has_changes == 'true' && steps.existing_pr.outputs.exists == 'true'
+        run: |
+          echo "### PR Updated" >> "$GITHUB_STEP_SUMMARY"
+          echo "Force-pushed new changes to existing PR: ${{ steps.existing_pr.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
+
