@@ -60,6 +60,9 @@ jobs:
           chmod +x ./generate.sh
           ./generate.sh
 
+      - name: Verify build
+        run: dotnet build -c Release --nologo
+
       - name: Check for changes
         id: changes
         run: |
