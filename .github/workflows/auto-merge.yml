@@ -34,7 +34,20 @@ jobs:
 
       - name: Enable auto-merge
         run: |
-          gh pr merge --auto --squash "$PR_URL"
+          for attempt in 1 2 3 4 5; do
+            if gh pr merge --auto --squash "$PR_URL"; then
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 5 ]; then
+              echo "Failed to enable auto-merge after $attempt attempts." >&2
+              exit 1
+            fi
+
+            sleep_seconds=$((attempt * 5))
+            echo "Attempt $attempt failed. Retrying in $sleep_seconds seconds..."
+            sleep "$sleep_seconds"
+          done
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
