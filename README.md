@@ -4,6 +4,58 @@ Centralized GitHub Actions reusable workflows for the [tryAGI](https://github.co
 
 ## Available Workflows
 
+### mkdocs-pages.yml
+
+Builds and deploys a MkDocs site to GitHub Pages using the shared tryAGI docs theme.
+
+**Inputs:**
+
+| Input | Required | Description |
+|-------|----------|-------------|
+| `theme-source` | No | Pip install target for the shared theme package. Defaults to `tryAGI/docs` `theme/` on `main`. |
+| `run-docs-sync` | No | Runs `autosdk docs sync .` before the build. Defaults to `true`. |
+| `docs-sync-command` | No | Override for the docs sync command. |
+| `dotnet-version` | No | .NET SDK version used when docs sync is enabled. |
+| `python-version` | No | Python version used for MkDocs. |
+| `site-dir` | No | Output directory for the built site. |
+
+**Usage:**
+```yaml
+name: MKDocs Deploy
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - 'autosdk.docs.json'
+      - '.github/workflows/mkdocs.yml'
+      - 'src/tests/IntegrationTests/**'
+      - 'README.md'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    uses: tryAGI/workflows/.github/workflows/mkdocs-pages.yml@main
+    secrets: inherit
+```
+
+**Behavior:**
+- Checks out the caller repository
+- Optionally runs `autosdk docs sync`
+- Installs `mkdocs-material`, `mkdocs-copy-to-llm`, and the shared `tryagi` theme package
+- Builds the site and deploys it to GitHub Pages
+
 ### auto-merge.yml
 
 Auto-approves and squash-merges pull requests from trusted actors (Dependabot, HavenDV).
