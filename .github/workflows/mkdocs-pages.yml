@@ -43,18 +43,39 @@ jobs:
         with:
           python-version: ${{ inputs.python-version }}
 
+      - name: Detect AutoSDK docs sync support
+        id: docs-sync
+        shell: bash
+        run: |
+          enabled=false
+
+          if [[ "${{ inputs.run-docs-sync }}" == "true" ]]; then
+            if [[ -f autosdk.docs.json ]]; then
+              enabled=true
+            else
+              for candidate in README.md docs/index.md; do
+                if [[ -f "$candidate" ]] && grep -Eq '# EXAMPLES:START|# EXAMPLES:END|# EXAMPLES #' "$candidate"; then
+                  enabled=true
+                  break
+                fi
+              done
+            fi
+          fi
+
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+
       - name: Setup .NET
-        if: inputs.run-docs-sync
+        if: steps.docs-sync.outputs.enabled == 'true'
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
 
       - name: Install AutoSDK CLI
-        if: inputs.run-docs-sync
+        if: steps.docs-sync.outputs.enabled == 'true'
         run: dotnet tool install --global autosdk.cli --prerelease
 
       - name: Generate docs
-        if: inputs.run-docs-sync
+        if: steps.docs-sync.outputs.enabled == 'true'
         run: ${{ inputs.docs-sync-command }}
 
       - name: Install MkDocs dependencies
