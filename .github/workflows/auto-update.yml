@@ -30,7 +30,36 @@ jobs:
       - name: Check for existing open PR
         id: existing_pr
         run: |
-          EXISTING_PR=$(gh pr list --head "bot/update-openapi" --state open --json number,url --jq '.[0]')
+          set -euo pipefail
+
+          retry() {
+            local max_attempts="$1"
+            local delay_seconds="$2"
+            shift 2
+
+            local attempt=1
+            while true; do
+              if "$@"; then
+                return 0
+              fi
+
+              local exit_code=$?
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                return "$exit_code"
+              fi
+
+              echo "Attempt $attempt/$max_attempts failed with exit code $exit_code. Retrying in ${delay_seconds}s..."
+              sleep "$delay_seconds"
+              attempt=$((attempt + 1))
+            done
+          }
+
+          check_existing_pr() {
+            EXISTING_PR=$(gh pr list --head "bot/update-openapi" --state open --json number,url --jq '.[0]')
+          }
+
+          EXISTING_PR=""
+          retry 5 10 check_existing_pr
           if [ -n "$EXISTING_PR" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             PR_NUMBER=$(echo "$EXISTING_PR" | jq -r '.number')
@@ -97,9 +126,37 @@ jobs:
       - name: Push changes
         if: steps.changes.outputs.has_changes == 'true'
         run: |
+          set -euo pipefail
+
+          retry() {
+            local max_attempts="$1"
+            local delay_seconds="$2"
+            shift 2
+
+            local attempt=1
+            while true; do
+              if "$@"; then
+                return 0
+              fi
+
+              local exit_code=$?
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                return "$exit_code"
+              fi
+
+              echo "Attempt $attempt/$max_attempts failed with exit code $exit_code. Retrying in ${delay_seconds}s..."
+              sleep "$delay_seconds"
+              attempt=$((attempt + 1))
+            done
+          }
+
+          push_branch() {
+            git push --force-with-lease -u origin bot/update-openapi
+          }
+
           git add .
           git commit -m "feat: Updated OpenAPI spec"
-          git push --force-with-lease -u origin bot/update-openapi
+          retry 5 10 push_branch
 
       - name: Wait for 15 seconds
         if: steps.changes.outputs.has_changes == 'true' && steps.existing_pr.outputs.exists == 'false'
@@ -109,7 +166,44 @@ jobs:
       - name: Create pull request
         if: steps.changes.outputs.has_changes == 'true' && steps.existing_pr.outputs.exists == 'false'
         run: |
-          PR_URL=$(gh pr create -B main -H bot/update-openapi --title 'feat: Updated OpenAPI spec' --body 'Automated OpenAPI spec update')
+          set -euo pipefail
+
+          retry() {
+            local max_attempts="$1"
+            local delay_seconds="$2"
+            shift 2
+
+            local attempt=1
+            while true; do
+              if "$@"; then
+                return 0
+              fi
+
+              local exit_code=$?
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                return "$exit_code"
+              fi
+
+              echo "Attempt $attempt/$max_attempts failed with exit code $exit_code. Retrying in ${delay_seconds}s..."
+              sleep "$delay_seconds"
+              attempt=$((attempt + 1))
+            done
+          }
+
+          create_or_find_pull_request() {
+            local existing_pr_url
+            existing_pr_url=$(gh pr list --head "bot/update-openapi" --state open --json url --jq 'if length > 0 then .[0].url else "" end')
+            if [ -n "$existing_pr_url" ]; then
+              PR_URL="$existing_pr_url"
+              echo "Found existing PR after retry: $PR_URL"
+              return 0
+            fi
+
+            PR_URL=$(gh pr create -B main -H bot/update-openapi --title 'feat: Updated OpenAPI spec' --body 'Automated OpenAPI spec update')
+          }
+
+          PR_URL=""
+          retry 5 15 create_or_find_pull_request
           echo "### PR Created" >> "$GITHUB_STEP_SUMMARY"
           echo "Created new PR: $PR_URL" >> "$GITHUB_STEP_SUMMARY"
         env:
@@ -120,4 +214,3 @@ jobs:
         run: |
           echo "### PR Updated" >> "$GITHUB_STEP_SUMMARY"
           echo "Force-pushed new changes to existing PR: ${{ steps.existing_pr.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
-
