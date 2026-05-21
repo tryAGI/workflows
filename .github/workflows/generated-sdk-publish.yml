@@ -1,0 +1,91 @@
+name: Reusable Generated SDK Publish
+
+on:
+  workflow_call:
+    inputs:
+      project-path:
+        description: SDK project path used for build, test, and trim checks.
+        required: true
+        type: string
+      dotnet-version:
+        description: .NET SDK version to install.
+        required: false
+        type: string
+        default: 10.0.x
+      configuration:
+        description: Build configuration.
+        required: false
+        type: string
+        default: Release
+      enable-caching:
+        description: Cache NuGet packages.
+        required: false
+        type: boolean
+        default: false
+      additional-test-arguments:
+        description: Extra arguments passed to dotnet test.
+        required: false
+        type: string
+        default: --logger GitHubActions
+    secrets:
+      nuget-key:
+        required: false
+      api-key:
+        required: false
+
+jobs:
+  publish:
+    name: Publish
+    uses: tryAGI/workflows/.github/workflows/dotnet-sdk-build-test-publish.yml@main
+    with:
+      dotnet-version: ${{ inputs.dotnet-version }}
+      project-path: ${{ inputs.project-path }}
+      configuration: ${{ inputs.configuration }}
+      enable-caching: ${{ inputs.enable-caching }}
+      additional-test-arguments: ${{ inputs.additional-test-arguments }}
+      publish: true
+      run-tests: true
+    secrets:
+      nuget-key: ${{ secrets.nuget-key }}
+      api-key: ${{ secrets.api-key }}
+
+  trim-check:
+    name: Trimming Check
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      DOTNET_NOLOGO: true
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: Install AutoSDK CLI
+        run: dotnet tool install --global autosdk.cli --prerelease
+
+      - name: Run trimming check
+        run: autosdk trim ${{ inputs.project-path }}
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: [publish]
+    if: startsWith(github.ref, 'refs/tags/v')
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Create release
+        run: gh release create ${{ github.ref_name }}
+          --title "${{ github.ref_name }}"
+          --generate-notes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
