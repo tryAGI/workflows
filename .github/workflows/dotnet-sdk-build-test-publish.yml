@@ -101,9 +101,14 @@ jobs:
           if-no-files-found: ignore
 
       - name: Publish to NuGet
-        if: inputs.publish && secrets.nuget-key != ''
+        if: inputs.publish
         shell: bash
         run: |
+          if [ -z "${{ secrets.nuget-key }}" ]; then
+            echo "No NuGet key configured. Skipping publish."
+            exit 0
+          fi
+
           mapfile -t packages < <(find . -type f -name '*.nupkg' ! -path '*/EmptyFiles/*' | sort)
           if [ "${#packages[@]}" -eq 0 ]; then
             echo "No packages found to publish."
