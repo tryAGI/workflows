@@ -1,0 +1,54 @@
+name: Reusable Generated SDK Pull Request
+
+on:
+  workflow_call:
+    inputs:
+      project-path:
+        description: SDK project path used for build and test.
+        required: false
+        type: string
+        default: ""
+      os:
+        description: Runner image.
+        required: false
+        type: string
+        default: ubuntu-latest
+      dotnet-version:
+        description: .NET SDK version to install.
+        required: false
+        type: string
+        default: 10.0.x
+      configuration:
+        description: Build configuration.
+        required: false
+        type: string
+        default: Release
+      enable-caching:
+        description: Cache NuGet packages.
+        required: false
+        type: boolean
+        default: false
+      additional-test-arguments:
+        description: Extra arguments passed to dotnet test.
+        required: false
+        type: string
+        default: --logger GitHubActions
+    secrets:
+      api-key:
+        required: false
+
+jobs:
+  test:
+    name: Test
+    uses: tryAGI/workflows/.github/workflows/dotnet-sdk-build-test-publish.yml@main
+    with:
+      os: ${{ inputs.os }}
+      dotnet-version: ${{ inputs.dotnet-version }}
+      project-path: ${{ inputs.project-path }}
+      configuration: ${{ inputs.configuration }}
+      enable-caching: ${{ inputs.enable-caching }}
+      additional-test-arguments: ${{ inputs.additional-test-arguments }}
+      publish: false
+      run-tests: true
+    secrets:
+      api-key: ${{ secrets.api-key }}
