@@ -4,7 +4,12 @@ on:
   workflow_call:
     inputs:
       project-path:
-        description: SDK project path used for build and test.
+        description: Legacy SDK library project path input kept for compatibility with existing generated callers.
+        required: false
+        type: string
+        default: ""
+      build-project-path:
+        description: Optional solution or project path used for build and test. Defaults to the repository root.
         required: false
         type: string
         default: ""
@@ -44,7 +49,7 @@ jobs:
     with:
       os: ${{ inputs.os }}
       dotnet-version: ${{ inputs.dotnet-version }}
-      project-path: ${{ inputs.project-path }}
+      project-path: ${{ inputs.build-project-path }}
       configuration: ${{ inputs.configuration }}
       enable-caching: ${{ inputs.enable-caching }}
       additional-test-arguments: ${{ inputs.additional-test-arguments }}
