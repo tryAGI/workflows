@@ -30,6 +30,46 @@ jobs:
         run: |
           echo "${{ github.triggering_actor }}"
 
+      - name: Wait for validation checks
+        env:
+          GH_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          for attempt in $(seq 1 180); do
+            checks_json="$(gh pr checks "$PR_URL" --json bucket,name,workflow 2>/dev/null || true)"
+            validation_checks="$(jq '[.[] | select(.workflow != "" and .workflow != "Auto-approve and auto-merge bot pull requests")]' <<< "$checks_json")"
+            validation_count="$(jq 'length' <<< "$validation_checks")"
+
+            if [ "$validation_count" -eq 0 ]; then
+              if [ "$attempt" -eq 30 ]; then
+                echo "No independent pull-request validation checks appeared within five minutes." >&2
+                exit 1
+              fi
+
+              echo "Waiting for an independent validation check to appear..."
+              sleep 10
+              continue
+            fi
+
+            failed_count="$(jq '[.[] | select(.bucket == "fail" or .bucket == "cancel")] | length' <<< "$validation_checks")"
+            if [ "$failed_count" -gt 0 ]; then
+              jq -r '.[] | select(.bucket == "fail" or .bucket == "cancel") | "Validation failed: \(.workflow) / \(.name) [\(.bucket)]"' <<< "$validation_checks" >&2
+              exit 1
+            fi
+
+            pending_count="$(jq '[.[] | select(.bucket == "pending")] | length' <<< "$validation_checks")"
+            if [ "$pending_count" -eq 0 ]; then
+              jq -r '.[] | "Validation complete: \(.workflow) / \(.name) [\(.bucket)]"' <<< "$validation_checks"
+              exit 0
+            fi
+
+            echo "Waiting for $pending_count validation check(s)..."
+            sleep 10
+          done
+
+          echo "Validation checks did not finish within 30 minutes." >&2
+          exit 1
+
       - name: Approve a PR
         if: ${{ github.event.pull_request.user.login != 'HavenDV' }}
         run: |
