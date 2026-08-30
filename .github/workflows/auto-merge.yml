@@ -1,6 +1,9 @@
 name: Auto-approve and auto-merge bot pull requests
 on:
   workflow_call:
+    secrets:
+      PERSONAL_TOKEN:
+        required: true
 
 jobs:
   auto-merge:
@@ -28,11 +31,12 @@ jobs:
           echo "${{ github.triggering_actor }}"
 
       - name: Approve a PR
+        if: ${{ github.event.pull_request.user.login != 'HavenDV' }}
         run: |
           gh pr review --approve "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
 
       - name: Enable auto-merge
         run: |
@@ -52,4 +56,4 @@ jobs:
           done
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
