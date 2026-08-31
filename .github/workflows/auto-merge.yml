@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event.workflow_run.conclusion == 'success' && github.repository_owner == 'tryAGI' }}
     permissions:
-      actions: read
       contents: write
       pull-requests: write
     env:
@@ -21,14 +20,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}
-          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
           WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          WORKFLOW_RUN_PULL_REQUESTS: ${{ toJson(github.event.workflow_run.pull_requests) }}
         run: |
-          pull_requests="$(gh api "repos/$REPOSITORY/actions/runs/$WORKFLOW_RUN_ID/pull_requests")"
-          pull_request_number="$(jq -er 'if length == 1 then .[0].number else empty end' <<< "$pull_requests" || true)"
+          pull_request_number="$(jq -er 'if length == 1 then .[0].number else empty end' <<< "$WORKFLOW_RUN_PULL_REQUESTS" || true)"
 
           if ! [[ "$pull_request_number" =~ ^[0-9]+$ ]]; then
-            echo "Expected exactly one pull request for validation run $WORKFLOW_RUN_ID; skipping."
+            echo "Expected exactly one pull request for the completed validation run; skipping."
             echo "eligible=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
