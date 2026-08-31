@@ -64,9 +64,11 @@ Auto-approves and squash-merges pull requests from trusted actors (Dependabot, H
 ```yaml
 name: Auto-approve and auto-merge bot pull requests
 on:
-  pull_request:
-    branches:
-      - main
+  workflow_run:
+    workflows:
+      - Test
+    types:
+      - completed
 
 permissions:
   contents: write
@@ -79,9 +81,11 @@ jobs:
 ```
 
 **Behavior:**
-- Triggers on non-draft PRs from `dependabot[bot]` or `HavenDV`
+- Runs in a privileged base-branch context only after the unprivileged `Test` workflow completes successfully
+- Resolves the associated PR through the Actions API and re-verifies its author, base branch, draft/state, and exact tested head SHA
+- Accepts only non-draft PRs from `dependabot[bot]` or `HavenDV` targeting `main`
 - Only runs for repos owned by `tryAGI`
-- Fetches Dependabot metadata (for Dependabot PRs)
+- Never checks out PR code or consumes artifacts from the unprivileged workflow
 - Auto-approves the PR
 - Enables auto-merge with squash strategy
 

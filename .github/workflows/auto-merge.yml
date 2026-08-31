@@ -8,32 +8,67 @@ on:
 jobs:
   auto-merge:
     runs-on: ubuntu-latest
-    if: ${{ github.event.pull_request.draft == false && (github.actor == 'dependabot[bot]' || github.actor == 'HavenDV') && github.repository_owner == 'tryAGI' }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.repository_owner == 'tryAGI' }}
     permissions:
       contents: write
       pull-requests: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      - name: Dependabot metadata
-        if: ${{ github.actor == 'dependabot[bot]' }}
-        id: metadata
-        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98
-        with:
-          github-token: "${{ secrets.GITHUB_TOKEN }}"
-
-      - name: Show sender
-        run: |
-          echo "${{ github.event.pull_request.sender }}"
-
-      - name: Show triggering_actor
-        run: |
-          echo "${{ github.triggering_actor }}"
-
-      - name: Wait for validation checks
+      - name: Resolve and authorize pull request
+        id: pull_request
         env:
           GH_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          pull_requests="$(gh api "repos/$REPOSITORY/actions/runs/$WORKFLOW_RUN_ID/pull_requests")"
+          pull_request_number="$(jq -er 'if length == 1 then .[0].number else empty end' <<< "$pull_requests" || true)"
+
+          if ! [[ "$pull_request_number" =~ ^[0-9]+$ ]]; then
+            echo "Expected exactly one pull request for validation run $WORKFLOW_RUN_ID; skipping."
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          pull_request="$(gh api "repos/$REPOSITORY/pulls/$pull_request_number")"
+          author="$(jq -r '.user.login' <<< "$pull_request")"
+          base_ref="$(jq -r '.base.ref' <<< "$pull_request")"
+          draft="$(jq -r '.draft' <<< "$pull_request")"
+          state="$(jq -r '.state' <<< "$pull_request")"
+          head_sha="$(jq -r '.head.sha' <<< "$pull_request")"
+
+          if [[ "$author" != "dependabot[bot]" && "$author" != "HavenDV" ]]; then
+            echo "Pull request #$pull_request_number is authored by $author; skipping."
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$base_ref" != "main" || "$draft" != "false" || "$state" != "open" ]]; then
+            echo "Pull request #$pull_request_number is not an open, non-draft PR targeting main; skipping."
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$head_sha" != "$WORKFLOW_RUN_HEAD_SHA" ]]; then
+            echo "Pull request #$pull_request_number advanced after validation; skipping stale run."
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Authorized pull request #$pull_request_number from $author at $head_sha."
+          {
+            echo "eligible=true"
+            echo "author=$author"
+            echo "url=https://github.com/$REPOSITORY/pull/$pull_request_number"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Wait for validation checks
+        if: ${{ steps.pull_request.outputs.eligible == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+          PR_URL: ${{ steps.pull_request.outputs.url }}
         run: |
           for attempt in $(seq 1 180); do
             checks_json="$(gh pr checks "$PR_URL" --json bucket,name,workflow 2>/dev/null || true)"
@@ -71,14 +106,15 @@ jobs:
           exit 1
 
       - name: Approve a PR
-        if: ${{ github.event.pull_request.user.login != 'HavenDV' }}
+        if: ${{ steps.pull_request.outputs.eligible == 'true' && steps.pull_request.outputs.author != 'HavenDV' }}
         run: |
           gh pr review --approve "$PR_URL"
         env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_URL: ${{ steps.pull_request.outputs.url }}
           GITHUB_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
 
       - name: Enable auto-merge
+        if: ${{ steps.pull_request.outputs.eligible == 'true' }}
         run: |
           for attempt in 1 2 3 4 5; do
             if gh pr merge --auto --squash "$PR_URL"; then
@@ -95,5 +131,5 @@ jobs:
             sleep "$sleep_seconds"
           done
         env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_URL: ${{ steps.pull_request.outputs.url }}
           GITHUB_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
