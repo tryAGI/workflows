@@ -63,6 +63,7 @@ jobs:
   trim-check:
     name: Trimming Check
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       DOTNET_NOLOGO: true
@@ -81,7 +82,29 @@ jobs:
         run: dotnet tool install --global autosdk.cli --prerelease
 
       - name: Run trimming check
-        run: autosdk trim ${{ inputs.project-path }}
+        shell: bash
+        env:
+          PROJECT_PATH: ${{ inputs.project-path }}
+        run: |
+          set -euo pipefail
+
+          heartbeat() {
+            while sleep 60; do
+              printf 'AutoSDK trim is still running (%ss elapsed) at %s\n' \
+                "$SECONDS" \
+                "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            done
+          }
+
+          heartbeat &
+          heartbeat_pid=$!
+          cleanup() {
+            kill "$heartbeat_pid" 2>/dev/null || true
+            wait "$heartbeat_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          autosdk trim "$PROJECT_PATH"
 
   release:
     name: Release
