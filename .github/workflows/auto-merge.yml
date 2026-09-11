@@ -1,9 +1,15 @@
 name: Auto-approve and auto-merge bot pull requests
 on:
   workflow_call:
+    inputs:
+      allow-github-token-fallback:
+        description: Allow repositories without a publish-on-main pipeline to merge with GITHUB_TOKEN.
+        required: false
+        type: boolean
+        default: false
     secrets:
       PERSONAL_TOKEN:
-        required: true
+        required: false
 
 jobs:
   auto-merge:
@@ -63,10 +69,21 @@ jobs:
             echo "url=https://github.com/$REPOSITORY/pull/$pull_request_number"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Verify merge credential
+        if: ${{ steps.pull_request.outputs.eligible == 'true' }}
+        env:
+          ALLOW_GITHUB_TOKEN_FALLBACK: ${{ inputs.allow-github-token-fallback }}
+          PERSONAL_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+        run: |
+          if [[ -z "$PERSONAL_TOKEN" && "$ALLOW_GITHUB_TOKEN_FALLBACK" != "true" ]]; then
+            echo "PERSONAL_TOKEN is required unless this caller explicitly allows the GITHUB_TOKEN fallback." >&2
+            exit 1
+          fi
+
       - name: Wait for validation checks
         if: ${{ steps.pull_request.outputs.eligible == 'true' }}
         env:
-          GH_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+          GH_TOKEN: ${{ secrets.PERSONAL_TOKEN || github.token }}
           PR_URL: ${{ steps.pull_request.outputs.url }}
         run: |
           for attempt in $(seq 1 180); do
@@ -110,13 +127,13 @@ jobs:
           gh pr review --approve "$PR_URL"
         env:
           PR_URL: ${{ steps.pull_request.outputs.url }}
-          GITHUB_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_TOKEN || github.token }}
 
       - name: Enable auto-merge
         if: ${{ steps.pull_request.outputs.eligible == 'true' }}
         run: |
           for attempt in 1 2 3 4 5; do
-            if gh pr merge --auto --squash "$PR_URL"; then
+            if gh pr merge --auto --squash "$PR_URL" || gh pr merge --squash "$PR_URL"; then
               exit 0
             fi
 
@@ -131,4 +148,4 @@ jobs:
           done
         env:
           PR_URL: ${{ steps.pull_request.outputs.url }}
-          GITHUB_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_TOKEN || github.token }}
