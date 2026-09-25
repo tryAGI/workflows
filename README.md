@@ -142,6 +142,24 @@ jobs:
 3. Add `secrets: inherit` to pass organization secrets
 4. Set required `permissions` in the caller workflow
 
+## Automatic stable SDK releases
+
+`generated-sdk-publish.yml` classifies the tested NuGet packages after its build, tests, and trim check succeed on `main` when the caller sets `auto-stable-release: true`. This input defaults to `false` so the shared workflow can be deployed before callers opt in. Classification produces a downloadable `release-impact-report` artifact and a job summary. `publish-stable` defaults to `false`; set it to `true` for a caller only after reviewing its report. Other SDK pipelines can call `auto-stable-release.yml` after their own gates. The shared `.NET` workflow exposes the same two inputs for callers that have a NuGet package artifact and `contents: write` permission.
+
+The release job compares every package in the repository with its latest stable version on NuGet using the pinned Microsoft `ApiCompat` tool. Binary breaks and parameter-name changes that break named arguments select **major**. Compatible public additions select **minor**. Changes to package source without an API change select **patch**. Changes limited to tests, docs, or CI skip the stable release. The highest impact wins for a repository's package family. Repositories without a stable tag or published stable package start at `0.1.0`; while major is zero, breaking changes increment the minor component by default.
+
+Behavioral, wire-format, and provider-side changes are not completely visible to an assembly comparison. Add a file under `.release-impact/` in the same PR when one of those changes needs a higher bump:
+
+```json
+{"bump":"major","reason":"The response JSON format changed for existing operations."}
+```
+
+Each changed file in that directory applies only to the next release after its commit. The classifier fails when the declaration has no reason or an invalid bump. It never lowers the bump detected by ApiCompat.
+
+In publish mode, the stable job rebuilds with `MINVERVERSIONOVERRIDE` (plus explicit `Version` and `PackageVersion` for projects without MinVer), checks that the package IDs match the tested candidates, publishes to NuGet, waits for every version to appear on the public feed, and only then pushes the `vX.Y.Z` tag and creates the GitHub release. It skips a stale `main` run if a newer commit has arrived. A missing NuGet key skips stable publication and produces no tag. Calls using custom CI can set `candidate-source: build` and, if packaging is explicit, `package-command: pack`.
+
+The release job creates the GitHub release itself because a tag pushed with the workflow's `GITHUB_TOKEN` does not start another workflow run. The normal `main` job continues to publish `-dev` packages.
+
 ## New SDK Projects
 
 SDKs scaffolded with `autosdk init` automatically include caller workflows pointing to this repo.

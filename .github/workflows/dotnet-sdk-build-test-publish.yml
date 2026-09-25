@@ -38,6 +38,16 @@ on:
         required: false
         type: boolean
         default: true
+      auto-stable-release:
+        description: Classify and publish a stable SemVer release after a successful main build.
+        required: false
+        type: boolean
+        default: false
+      publish-stable:
+        description: Publish after classification instead of producing a report only.
+        required: false
+        type: boolean
+        default: false
       additional-test-arguments:
         description: Extra arguments passed to dotnet test.
         required: false
@@ -121,3 +131,15 @@ jobs:
               --source https://api.nuget.org/v3/index.json \
               --api-key "${{ secrets.nuget-key }}"
           done
+
+  auto-stable-release:
+    needs: [build]
+    if: inputs.publish && inputs.auto-stable-release && github.ref == 'refs/heads/main'
+    uses: tryAGI/workflows/.github/workflows/auto-stable-release.yml@main
+    with:
+      project-path: ${{ inputs.project-path }}
+      dotnet-version: ${{ inputs.dotnet-version }}
+      configuration: ${{ inputs.configuration }}
+      publish-stable: ${{ inputs.publish-stable }}
+    secrets:
+      nuget-key: ${{ secrets.nuget-key }}

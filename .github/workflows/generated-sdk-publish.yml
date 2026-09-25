@@ -37,6 +37,16 @@ on:
         required: false
         type: string
         default: --logger GitHubActions
+      auto-stable-release:
+        description: Automatically classify and publish a stable version after all checks pass.
+        required: false
+        type: boolean
+        default: false
+      publish-stable:
+        description: Publish after classification instead of producing a report only.
+        required: false
+        type: boolean
+        default: false
     secrets:
       nuget-key:
         required: false
@@ -56,6 +66,7 @@ jobs:
       additional-test-arguments: ${{ inputs.additional-test-arguments }}
       publish: true
       run-tests: true
+      auto-stable-release: false
     secrets:
       nuget-key: ${{ secrets.nuget-key }}
       api-key: ${{ secrets.api-key }}
@@ -105,6 +116,19 @@ jobs:
           trap cleanup EXIT
 
           autosdk trim "$PROJECT_PATH"
+
+  auto-stable-release:
+    name: Automatic stable release
+    needs: [publish, trim-check]
+    if: inputs.auto-stable-release && github.ref == 'refs/heads/main'
+    uses: tryAGI/workflows/.github/workflows/auto-stable-release.yml@main
+    with:
+      project-path: ${{ inputs.build-project-path }}
+      dotnet-version: ${{ inputs.dotnet-version }}
+      configuration: ${{ inputs.configuration }}
+      publish-stable: ${{ inputs.publish-stable }}
+    secrets:
+      nuget-key: ${{ secrets.nuget-key }}
 
   release:
     name: Release

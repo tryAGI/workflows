@@ -1,0 +1,281 @@
+name: Automatic stable NuGet release
+
+on:
+  workflow_call:
+    inputs:
+      project-path:
+        type: string
+        required: false
+        default: ''
+      os:
+        type: string
+        required: false
+        default: ubuntu-latest
+      dotnet-version:
+        type: string
+        required: false
+        default: 10.0.x
+      configuration:
+        type: string
+        required: false
+        default: Release
+      candidate-source:
+        description: artifact for the shared workflow, build for custom workflows.
+        type: string
+        required: false
+        default: artifact
+      package-command:
+        description: build when GeneratePackageOnBuild is enabled, otherwise pack.
+        type: string
+        required: false
+        default: build
+      workloads:
+        type: string
+        required: false
+        default: ''
+      zero-major-policy:
+        type: string
+        required: false
+        default: minor
+      publish-stable:
+        description: Publish the classified stable release after the fleet report has been reviewed.
+        type: boolean
+        required: false
+        default: false
+    secrets:
+      nuget-key:
+        required: false
+
+concurrency:
+  group: automatic-stable-release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ${{ inputs.os }}
+    permissions:
+      contents: write
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      DOTNET_NOLOGO: true
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+    steps:
+      - name: Check NuGet credentials
+        id: credentials
+        shell: bash
+        env:
+          NUGET_KEY: ${{ secrets.nuget-key }}
+          PUBLISH_STABLE: ${{ inputs.publish-stable }}
+        run: |
+          if [ "$PUBLISH_STABLE" != true ] || [ -n "$NUGET_KEY" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "NuGet key is unavailable; stable release skipped" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Checkout SDK
+        if: steps.credentials.outputs.ready == 'true'
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Checkout release tooling
+        if: steps.credentials.outputs.ready == 'true'
+        uses: actions/checkout@v6
+        with:
+          repository: tryAGI/workflows
+          path: release-tooling
+          persist-credentials: false
+
+      - name: Download tested package candidates
+        if: steps.credentials.outputs.ready == 'true' && inputs.candidate-source == 'artifact'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: nuget-packages-*
+          path: ${{ runner.temp }}/release-candidates
+          merge-multiple: true
+
+      - name: Setup .NET
+        if: steps.credentials.outputs.ready == 'true'
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: |
+            ${{ inputs.dotnet-version }}
+            10.0.x
+
+      - name: Setup Python
+        if: steps.credentials.outputs.ready == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install requested .NET workloads
+        if: steps.credentials.outputs.ready == 'true' && inputs.workloads != ''
+        shell: bash
+        env:
+          WORKLOADS: ${{ inputs.workloads }}
+        run: |
+          set -euo pipefail
+          read -r -a selected <<< "$WORKLOADS"
+          dotnet workload install "${selected[@]}"
+
+      - name: Install pinned API compatibility tool
+        if: steps.credentials.outputs.ready == 'true'
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            cd "$(cygpath -u "$RUNNER_TEMP")"
+          else
+            cd "$RUNNER_TEMP"
+          fi
+          dotnet tool install Microsoft.DotNet.ApiCompat.Tool \
+            --version 10.0.401 \
+            --tool-path "$RUNNER_TEMP/release-tools"
+          if [ "$RUNNER_OS" = Windows ]; then
+            echo "APICOMPAT_PATH=$RUNNER_TEMP/release-tools/apicompat.exe" >> "$GITHUB_ENV"
+          else
+            echo "APICOMPAT_PATH=$RUNNER_TEMP/release-tools/apicompat" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build candidate packages for custom CI
+        if: steps.credentials.outputs.ready == 'true' && inputs.candidate-source == 'build'
+        shell: bash
+        env:
+          PROJECT_PATH: ${{ inputs.project-path }}
+          PACKAGE_COMMAND: ${{ inputs.package-command }}
+        run: |
+          set -euo pipefail
+          if [ "$PACKAGE_COMMAND" != build ] && [ "$PACKAGE_COMMAND" != pack ]; then
+            echo "Unsupported package command: $PACKAGE_COMMAND" >&2
+            exit 1
+          fi
+          target=()
+          if [ -n "$PROJECT_PATH" ]; then target=("$PROJECT_PATH"); fi
+          dotnet "$PACKAGE_COMMAND" "${target[@]}" \
+            --configuration '${{ inputs.configuration }}' \
+            --nologo \
+            --maxcpucount:1 \
+            -p:UseSharedCompilation=false \
+            -p:PackageOutputPath="$RUNNER_TEMP/release-candidates"
+
+      - name: Classify public API changes
+        if: steps.credentials.outputs.ready == 'true'
+        id: plan
+        shell: bash
+        env:
+          PUBLISH_STABLE: ${{ inputs.publish-stable }}
+        run: |
+          set -euo pipefail
+          python release-tooling/scripts/release_impact.py plan \
+            --repo "$GITHUB_WORKSPACE" \
+            --packages "$RUNNER_TEMP/release-candidates" \
+            --apicompat "$APICOMPAT_PATH" \
+            --cache "$RUNNER_TEMP/release-baselines" \
+            --zero-major-policy '${{ inputs.zero-major-policy }}' \
+            --output "$RUNNER_TEMP/release-plan.json"
+          if [ "$PUBLISH_STABLE" != true ]; then
+            echo "Report mode: no stable package or tag will be published." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          cat "$RUNNER_TEMP/release-plan.json" >> "$GITHUB_STEP_SUMMARY"
+          level=$(python -c 'import json,sys;print(json.load(open(sys.argv[1]))["level"])' "$RUNNER_TEMP/release-plan.json")
+          if [ "$level" = none ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          {
+            echo "release=true"
+            echo "version=$(python -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$RUNNER_TEMP/release-plan.json")"
+            echo "tag=$(python -c 'import json,sys;print(json.load(open(sys.argv[1]))["tag"])' "$RUNNER_TEMP/release-plan.json")"
+            echo "level=$level"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload release impact report
+        if: steps.credentials.outputs.ready == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-impact-report
+          path: ${{ runner.temp }}/release-plan.json
+          if-no-files-found: error
+
+      - name: Ensure this run is still the tip of main
+        if: inputs.publish-stable && steps.plan.outputs.release == 'true'
+        id: fresh
+        shell: bash
+        run: |
+          set -euo pipefail
+          current=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [ "$current" != "$GITHUB_SHA" ]; then
+            echo "main advanced since this run; the newer run will release it"
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build stable packages
+        if: inputs.publish-stable && steps.fresh.outputs.current == 'true'
+        shell: bash
+        env:
+          PROJECT_PATH: ${{ inputs.project-path }}
+          PACKAGE_COMMAND: ${{ inputs.package-command }}
+          RELEASE_VERSION: ${{ steps.plan.outputs.version }}
+          MINVERVERSIONOVERRIDE: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          target=()
+          if [ -n "$PROJECT_PATH" ]; then target=("$PROJECT_PATH"); fi
+          dotnet "$PACKAGE_COMMAND" "${target[@]}" \
+            --configuration '${{ inputs.configuration }}' \
+            --nologo \
+            --maxcpucount:1 \
+            -p:UseSharedCompilation=false \
+            -p:Version="$RELEASE_VERSION" \
+            -p:PackageVersion="$RELEASE_VERSION" \
+            -p:PackageOutputPath="$RUNNER_TEMP/release-stable"
+
+      - name: Validate stable package set
+        if: inputs.publish-stable && steps.fresh.outputs.current == 'true'
+        run: python release-tooling/scripts/release_impact.py verify
+          --plan "$RUNNER_TEMP/release-plan.json"
+          --packages "$RUNNER_TEMP/release-stable"
+
+      - name: Publish stable packages
+        if: inputs.publish-stable && steps.fresh.outputs.current == 'true'
+        shell: bash
+        env:
+          RELEASE_LEVEL: ${{ steps.plan.outputs.level }}
+          NUGET_KEY: ${{ secrets.nuget-key }}
+        run: |
+          set -euo pipefail
+          duplicate_option=()
+          if [ "$RELEASE_LEVEL" = recover ]; then
+            duplicate_option=(--skip-duplicate)
+          fi
+          while IFS= read -r -d '' package; do
+            dotnet nuget push "$package" \
+              "${duplicate_option[@]}" \
+              --source https://api.nuget.org/v3/index.json \
+              --api-key "$NUGET_KEY"
+          done < <(python -c 'from pathlib import Path;import os,sys;[sys.stdout.buffer.write(os.fsencode(str(p))+b"\0") for p in Path(sys.argv[1]).rglob("*.nupkg")]' "$RUNNER_TEMP/release-stable")
+
+      - name: Verify publication on NuGet
+        if: inputs.publish-stable && steps.fresh.outputs.current == 'true'
+        run: python release-tooling/scripts/release_impact.py verify
+          --plan "$RUNNER_TEMP/release-plan.json"
+          --packages "$RUNNER_TEMP/release-stable"
+          --feed
+
+      - name: Tag and create GitHub release
+        if: inputs.publish-stable && steps.fresh.outputs.current == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='${{ steps.plan.outputs.tag }}'
+          git tag "$tag"
+          git push origin "refs/tags/$tag"
+          gh release view "$tag" >/dev/null 2>&1 ||
+            gh release create "$tag" --title "$tag" --generate-notes
