@@ -21,7 +21,9 @@ from pathlib import Path
 
 
 SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
-DIAGNOSTIC = re.compile(r"^CP\d{4}:", re.MULTILINE)
+# PKV006 reports a removed target framework, which breaks consumers just as a
+# removed public member does. Other package-validation codes remain failures.
+DIAGNOSTIC = re.compile(r"^(?:CP\d{4}|PKV006):", re.MULTILINE)
 ADDITION = re.compile(r"^CP000[12]:.*but not on \[Baseline\]", re.MULTILINE)
 LEVELS = {"none": 0, "patch": 1, "minor": 2, "major": 3}
 FEED = "https://api.nuget.org/v3-flatcontainer"

@@ -46,6 +46,22 @@ class ReleaseImpactTests(unittest.TestCase):
             result = release.plan(self.args)
         self.assertEqual((result["level"], result["version"]), ("major", "2.0.0"))
 
+    def test_removed_target_framework_requires_major(self):
+        with patch.object(release, "stable_tags", return_value=[((1, 0, 0), "v1.0.0")]), \
+             patch.object(release, "changed_paths", return_value=["src/libs/Fixture/Fixture.csproj"]), \
+             patch.object(release, "published_versions", return_value=[(1, 0, 0)]), \
+             patch.object(release, "download_baseline", return_value=Path("baseline.nupkg")), \
+             patch.object(release, "compare", return_value="PKV006: Target framework net6.0 is no longer supported"):
+            result = release.plan(self.args)
+        self.assertEqual((result["level"], result["version"]), ("major", "2.0.0"))
+        self.assertEqual(result["packages"][0]["breaking_diagnostics"], 1)
+
+    def test_apicompat_accepts_removed_framework_diagnostic(self):
+        output = "PKV006: Target framework net6.0 is no longer supported in the latest version."
+        with patch.object(release, "command", return_value=subprocess.CompletedProcess([], 1, output, "")):
+            self.assertIn("PKV006", release.compare(Path("apicompat"), Path("current.nupkg"),
+                                                        Path("baseline.nupkg"), strict=False))
+
     def test_additive_api_requires_minor(self):
         outputs = ["APICompat ran successfully without finding any breaking changes.",
                    "CP0002: new member exists on current but not on [Baseline]"]
