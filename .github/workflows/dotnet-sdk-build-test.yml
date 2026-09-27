@@ -1,0 +1,83 @@
+name: Reusable SDK .NET Build and Test
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        description: Runner image.
+        required: false
+        type: string
+        default: ubuntu-latest
+      dotnet-version:
+        description: .NET SDK version to install.
+        required: false
+        type: string
+        default: 10.0.x
+      project-path:
+        description: Optional solution or project path.
+        required: false
+        type: string
+        default: ""
+      configuration:
+        description: Build configuration.
+        required: false
+        type: string
+        default: Release
+      enable-caching:
+        description: Cache NuGet packages.
+        required: false
+        type: boolean
+        default: false
+      additional-test-arguments:
+        description: Extra arguments passed to dotnet test.
+        required: false
+        type: string
+        default: ""
+    secrets:
+      api-key:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ${{ inputs.os }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      DOTNET_NOLOGO: true
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      API_KEY: ${{ secrets.api-key }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Cache NuGet packages
+        if: inputs.enable-caching
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: Build
+        run: dotnet build
+          ${{ inputs.project-path }}
+          --configuration ${{ inputs.configuration }}
+          --nologo
+
+      - name: Test
+        run: dotnet test
+          ${{ inputs.project-path }}
+          --configuration ${{ inputs.configuration }}
+          --nologo
+          ${{ inputs.additional-test-arguments }}

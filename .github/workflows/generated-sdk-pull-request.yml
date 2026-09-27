@@ -45,7 +45,7 @@ on:
 jobs:
   test:
     name: Test
-    uses: tryAGI/workflows/.github/workflows/dotnet-sdk-build-test-publish.yml@main
+    uses: tryAGI/workflows/.github/workflows/dotnet-sdk-build-test.yml@main
     with:
       os: ${{ inputs.os }}
       dotnet-version: ${{ inputs.dotnet-version }}
@@ -53,7 +53,5 @@ jobs:
       configuration: ${{ inputs.configuration }}
       enable-caching: ${{ inputs.enable-caching }}
       additional-test-arguments: ${{ inputs.additional-test-arguments }}
-      publish: false
-      run-tests: true
     secrets:
       api-key: ${{ secrets.api-key }}
