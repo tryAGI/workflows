@@ -7,10 +7,12 @@ on:
     paths:
       - '.github/workflows/*.yml'
       - '.github/workflows/*.yaml'
+      - 'tests/test_auto_merge.py'
   pull_request:
     paths:
       - '.github/workflows/*.yml'
       - '.github/workflows/*.yaml'
+      - 'tests/test_auto_merge.py'
 
 jobs:
   actionlint:
@@ -26,3 +28,6 @@ jobs:
           matcher: true
           cache: true
           fail-on-error: true
+
+      - name: Test auto-merge validation failures
+        run: python3 -B -m unittest discover -s tests -p test_auto_merge.py

@@ -15,9 +15,8 @@ jobs:
   auto-merge:
     runs-on: ubuntu-latest
     if: ${{ github.event.workflow_run.conclusion == 'success' && github.repository_owner == 'tryAGI' }}
-    permissions:
-      contents: write
-      pull-requests: write
+    # Inherit the caller's explicit permissions. GITHUB_TOKEN fallback callers
+    # also need checks: read and statuses: read to inspect private CI results.
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
@@ -86,8 +85,29 @@ jobs:
           GH_TOKEN: ${{ secrets.PERSONAL_TOKEN || github.token }}
           PR_URL: ${{ steps.pull_request.outputs.url }}
         run: |
+          set -euo pipefail
+
           for attempt in $(seq 1 180); do
-            checks_json="$(gh pr checks "$PR_URL" --json bucket,name,workflow 2>/dev/null || true)"
+            checks_status=0
+            checks_json="$(gh pr checks "$PR_URL" --json bucket,name,workflow)" || checks_status=$?
+            case "$checks_status" in
+              0|1|8) ;; # gh reports failing checks as 1 and pending checks as 8.
+              *)
+                echo "Unable to query pull-request checks (gh exit $checks_status)." >&2
+                exit 1
+                ;;
+            esac
+            if ! jq -e -s '
+              length == 1 and (.[0] | type == "array" and all(.[];
+                type == "object" and
+                (.name | type == "string") and
+                (.workflow | type == "string") and
+                (.bucket == "pass" or .bucket == "fail" or .bucket == "pending" or
+                 .bucket == "skipping" or .bucket == "cancel")))
+            ' <<< "$checks_json" >/dev/null; then
+              echo "Pull-request check query returned empty or invalid JSON; refusing to merge." >&2
+              exit 1
+            fi
             validation_checks="$(jq '[.[] | select(.workflow != "" and .workflow != "Auto-approve and auto-merge bot pull requests")]' <<< "$checks_json")"
             validation_count="$(jq 'length' <<< "$validation_checks")"
 
@@ -110,6 +130,10 @@ jobs:
 
             pending_count="$(jq '[.[] | select(.bucket == "pending")] | length' <<< "$validation_checks")"
             if [ "$pending_count" -eq 0 ]; then
+              if ! jq -e 'any(.[]; .bucket == "pass")' <<< "$validation_checks" >/dev/null; then
+                echo "No independent validation check passed; refusing to merge." >&2
+                exit 1
+              fi
               jq -r '.[] | "Validation complete: \(.workflow) / \(.name) [\(.bucket)]"' <<< "$validation_checks"
               exit 0
             fi
