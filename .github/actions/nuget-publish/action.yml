@@ -1,0 +1,54 @@
+name: Publish NuGet packages with trusted publishing
+description: >
+  Downloads the nuget-packages-* artifacts of the current run, exchanges the GitHub OIDC token for a
+  short-lived nuget.org API key with NuGet/login and pushes the packages. Use it as a step of a job in the
+  CALLER repository (not inside a reusable workflow): nuget.org matches the trusted-publishing policy
+  against job_workflow_ref, so the repository and workflow file of the policy must be the caller's.
+  The job needs `permissions: id-token: write` and `contents: read`.
+
+inputs:
+  user:
+    description: nuget.org username of the account that created the trusted-publishing policy (not the package-owner organization).
+    required: true
+  artifact-pattern:
+    description: Pattern of the artifacts that hold the .nupkg files.
+    required: false
+    default: nuget-packages-*
+  source:
+    description: NuGet push source.
+    required: false
+    default: https://api.nuget.org/v3/index.json
+
+runs:
+  using: composite
+  steps:
+    - name: Download packages
+      uses: actions/download-artifact@v8
+      with:
+        pattern: ${{ inputs.artifact-pattern }}
+        path: ${{ runner.temp }}/nuget-publish
+        merge-multiple: true
+
+    - name: NuGet login
+      id: nuget_login
+      uses: NuGet/login@v1
+      with:
+        user: ${{ inputs.user }}
+
+    - name: Push packages
+      shell: bash
+      env:
+        NUGET_API_KEY: ${{ steps.nuget_login.outputs.NUGET_API_KEY }}
+        PACKAGES_DIR: ${{ runner.temp }}/nuget-publish
+        SOURCE: ${{ inputs.source }}
+      run: |
+        set -euo pipefail
+        find "$PACKAGES_DIR" -path "*/EmptyFiles/*" -name "*.nupkg" -delete
+        mapfile -d '' packages < <(find "$PACKAGES_DIR" -type f -name "*.nupkg" -print0 | sort -z)
+        if (( ${#packages[@]} == 0 )); then
+          echo "::error::No .nupkg files were found in the downloaded artifacts."
+          exit 1
+        fi
+        for package in "${packages[@]}"; do
+          dotnet nuget push "$package" --skip-duplicate --source "$SOURCE" --api-key "$NUGET_API_KEY"
+        done
