@@ -34,7 +34,7 @@ on:
         type: boolean
         default: true
       publish:
-        description: Publish generated NuGet packages when a key is available.
+        description: Upload the NuGet packages as nuget-packages-<os> for the caller's trusted-publishing job.
         required: false
         type: boolean
         default: true
@@ -44,7 +44,7 @@ on:
         type: boolean
         default: false
       publish-stable:
-        description: Publish after classification instead of producing a report only.
+        description: Must stay false here; stable publishing needs the auto-stable-release action in the caller job.
         required: false
         type: boolean
         default: false
@@ -54,8 +54,6 @@ on:
         type: string
         default: ""
     secrets:
-      nuget-key:
-        required: false
       api-key:
         required: false
 
@@ -110,27 +108,6 @@ jobs:
           path: ./**/*.nupkg
           if-no-files-found: ignore
 
-      - name: Publish to NuGet
-        if: inputs.publish
-        shell: bash
-        run: |
-          if [ -z "${{ secrets.nuget-key }}" ]; then
-            echo "No NuGet key configured. Skipping publish."
-            exit 0
-          fi
-
-          mapfile -t packages < <(find . -type f -name '*.nupkg' ! -path '*/EmptyFiles/*' | sort)
-          if [ "${#packages[@]}" -eq 0 ]; then
-            echo "No packages found to publish."
-            exit 0
-          fi
-
-          for package in "${packages[@]}"; do
-            dotnet nuget push "$package" \
-              --skip-duplicate \
-              --source https://api.nuget.org/v3/index.json \
-              --api-key "${{ secrets.nuget-key }}"
-          done
 
   auto-stable-release:
     needs: [build]
@@ -141,5 +118,3 @@ jobs:
       dotnet-version: ${{ inputs.dotnet-version }}
       configuration: ${{ inputs.configuration }}
       publish-stable: ${{ inputs.publish-stable }}
-    secrets:
-      nuget-key: ${{ secrets.nuget-key }}
