@@ -156,10 +156,33 @@ Behavioral, wire-format, and provider-side changes are not completely visible to
 
 Each changed file in that directory applies only to the next release after its commit. The classifier fails when the declaration has no reason or an invalid bump. It never lowers the bump detected by ApiCompat.
 
-In publish mode, the stable job rebuilds with `MINVERVERSIONOVERRIDE` (plus explicit `Version` and `PackageVersion` for projects without MinVer), checks that the package IDs match the tested candidates, publishes to NuGet, waits for every version to appear on the public feed, and only then pushes the `vX.Y.Z` tag and creates the GitHub release. It skips a stale `main` run if a newer commit has arrived. A missing NuGet key skips stable publication and produces no tag. Calls using custom CI can set `candidate-source: build` and, if packaging is explicit, `package-command: pack`.
+In publish mode, the stable steps rebuild with `MINVERVERSIONOVERRIDE` (plus explicit `Version` and `PackageVersion` for projects without MinVer), checks that the package IDs match the tested candidates, publishes to NuGet, waits for every version to appear on the public feed, and only then pushes the `vX.Y.Z` tag and creates the GitHub release. It skips a stale `main` run if a newer commit has arrived.
+
+Publish mode needs NuGet trusted publishing, which nuget.org matches against the **caller's** workflow file, so it cannot run inside a reusable workflow: `auto-stable-release.yml` is report-only and fails if `publish-stable` is `true`. To publish, run the composite `tryAGI/workflows/.github/actions/auto-stable-release@main` as a step of a job in the caller workflow, with `permissions: {contents: write, id-token: write}`, `if: github.ref == 'refs/heads/main'`, the `automatic-stable-release-<repo>` concurrency group and `nuget-user: havendv`. Calls using custom CI can set `candidate-source: build` and, if packaging is explicit, `package-command: pack`.
 
 The release job creates the GitHub release itself because a tag pushed with the workflow's `GITHUB_TOKEN` does not start another workflow run. The normal `main` job continues to publish `-dev` packages.
 
+## NuGet trusted publishing
+
+There are no NuGet API keys. The reusable build workflows upload `nuget-packages-<os>` artifacts and never push to nuget.org. The caller pushes them in its own job with the composite action, because nuget.org matches a trusted-publishing policy against the caller repository **and workflow file**; a login inside a reusable workflow from this repository never matches:
+
+```yaml
+  nuget-trusted-publish:
+    name: NuGet trusted publishing
+    needs: publish
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: tryAGI/workflows/.github/actions/nuget-publish@main
+        with:
+          user: havendv   # nuget.org account that owns the policies, not the package-owner organization
+```
+
+Every repository needs a policy on https://www.nuget.org/account/trustedpublishing for its owner, repository and workflow file (for example `tryAGI` / `Anthropic` / `dotnet.yml`), scoped to its package ids.
+
 ## New SDK Projects
 
-SDKs scaffolded with `autosdk init` automatically include caller workflows pointing to this repo.
+SDKs scaffolded with `autosdk init` automatically include caller workflows pointing to this repo, including the `nuget-trusted-publish` job. Create the repository's nuget.org trusted-publishing policy before its first push, or that push builds but cannot publish.
