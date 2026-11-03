@@ -43,13 +43,11 @@ on:
         type: boolean
         default: false
       publish-stable:
-        description: Publish after classification instead of producing a report only.
+        description: Must stay false here; stable publishing needs the auto-stable-release action in the caller job.
         required: false
         type: boolean
         default: false
     secrets:
-      nuget-key:
-        required: false
       api-key:
         required: false
 
@@ -68,7 +66,6 @@ jobs:
       run-tests: true
       auto-stable-release: false
     secrets:
-      nuget-key: ${{ secrets.nuget-key }}
       api-key: ${{ secrets.api-key }}
 
   trim-check:
@@ -127,8 +124,6 @@ jobs:
       dotnet-version: ${{ inputs.dotnet-version }}
       configuration: ${{ inputs.configuration }}
       publish-stable: ${{ inputs.publish-stable }}
-    secrets:
-      nuget-key: ${{ secrets.nuget-key }}
 
   release:
     name: Release
