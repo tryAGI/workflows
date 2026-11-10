@@ -1,0 +1,51 @@
+name: Check the nuget.org trusted-publishing policy
+description: >
+  Exchanges the GitHub OIDC token for a nuget.org key and throws the key away, purely to learn whether a
+  matching trusted-publishing policy exists. Run it as an EARLY step, before the build, so a missing or
+  mismatched policy fails the run in seconds and names the fields to fix, instead of surfacing as an
+  HTTP 401 at the push after the whole build has already run. Like nuget-publish, it must run in a job of
+  the CALLER repository, because nuget.org matches the policy against job_workflow_ref: the repository and
+  workflow file in the policy are the caller's, not this action's. The job needs `permissions: id-token: write`.
+
+inputs:
+  user:
+    description: nuget.org username of the account that created the trusted-publishing policy (not the package-owner organization).
+    required: true
+  packages:
+    description: Package ID or glob the policy is expected to cover. Only used to make the error message concrete.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Verify trusted publishing policy
+      id: login
+      continue-on-error: true
+      uses: NuGet/login@v1
+      with:
+        user: ${{ inputs.user }}
+
+    # The minted key is deliberately unused and never exported: the real push mints its own, because these
+    # keys are short-lived and a build can outlive one.
+    - name: Explain a missing trusted publishing policy
+      if: steps.login.outcome == 'failure'
+      shell: bash
+      env:
+        NUGET_USER: ${{ inputs.user }}
+        PACKAGES: ${{ inputs.packages }}
+        REPOSITORY_OWNER: ${{ github.repository_owner }}
+        REPOSITORY: ${{ github.repository }}
+        # owner/repo/.github/workflows/<file>@refs/heads/<branch>; the policy matches the file name alone.
+        WORKFLOW_REF: ${{ github.workflow_ref }}
+      run: |
+        set -euo pipefail
+        repository_name="${REPOSITORY#*/}"
+        workflow_file="${WORKFLOW_REF%@*}"
+        workflow_file="${workflow_file##*/}"
+        packages_hint="the package IDs this workflow pushes"
+        if [ -n "$PACKAGES" ]; then
+          packages_hint="'$PACKAGES'"
+        fi
+        echo "::error::No usable nuget.org trusted-publishing policy, so the token exchange would fail with HTTP 401 at the push. Create one at https://www.nuget.org/account/trustedpublishing while signed in as '$NUGET_USER', then re-run. It must match this workflow exactly: policy creator user '$NUGET_USER' (this is what NuGet/login sends, and it is the account that creates the policy, not the package-owner organization); package owner = the nuget.org account that owns the packages; glob pattern covering $packages_hint, entered as a pattern rather than picked from a list if nothing is published under it yet; repository owner '$REPOSITORY_OWNER'; repository '$repository_name'; workflow file '$workflow_file'; environment left empty unless this job declares one."
+        exit 1
