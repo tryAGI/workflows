@@ -99,8 +99,23 @@ jobs:
           CHANGED=$(git diff --name-only)
           if [ -z "$CHANGED" ]; then
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "spec_changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            # Did the *spec* move, or only the code generated from it? The two are routinely
+            # different: a newer autosdk.cli regenerates differently from a byte-identical document,
+            # and calling that "Updated OpenAPI spec" is how generator drift reaches main unnoticed.
+            # tryAGI/Letta's #69 changed 172 generated files and not one spec line under that title;
+            # tryAGI/Julep's equivalent stopped the library compiling.
+            # The filename may carry a prefix or an infix, not just `openapi.yaml`: real ones
+            # include `stt-asyncapi.json`, `text-to-dialogue-asyncapi.json`, `openapi.realtime.yaml`
+            # and `openapi.upstream.json`. Anchoring on the start of the name missed every prefixed
+            # contract, which would have reported Cartesia's spec updates as mere regenerations.
+            if echo "$CHANGED" | grep -qE '[^/]*(openapi|asyncapi)[^/]*\.(ya?ml|json)$'; then
+              echo "spec_changed=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "spec_changed=false" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       - name: Close stale PR and clean up branch (no changes)
@@ -159,7 +174,11 @@ jobs:
           }
 
           git add .
-          git commit -m "feat: Updated OpenAPI spec"
+          if [ "${{ steps.changes.outputs.spec_changed }}" = "true" ]; then
+            git commit -m "feat: Updated OpenAPI spec"
+          else
+            git commit -m "chore: Regenerated from an unchanged spec"
+          fi
           retry 5 10 push_branch
 
       - name: Wait for 15 seconds
@@ -203,7 +222,15 @@ jobs:
               return 0
             fi
 
-            PR_URL=$(gh pr create -B main -H bot/update-openapi --title 'feat: Updated OpenAPI spec' --body 'Automated OpenAPI spec update')
+            if [ "${{ steps.changes.outputs.spec_changed }}" = "true" ]; then
+              PR_TITLE='feat: Updated OpenAPI spec'
+              PR_BODY='Automated OpenAPI spec update.'
+            else
+              PR_TITLE='chore: Regenerated from an unchanged spec'
+              PR_BODY='Automated regeneration. **The spec did not change** - it is byte-identical to the committed one, and every change here comes from a newer autosdk.cli generating differently. Review it as a generator upgrade: check that the library still builds, since this is how a public signature can change, or stop compiling, without upstream touching anything.'
+            fi
+
+            PR_URL=$(gh pr create -B main -H bot/update-openapi --title "$PR_TITLE" --body "$PR_BODY")
           }
 
           PR_URL=""
